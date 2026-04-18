@@ -1,0 +1,31 @@
+# ambiente virtual
+.venv/
+venv/
+
+# segredos e sessão
+.env
+.env.*
+auth_state.json
+
+# saídas geradas
+output/
+*.csv
+*.json
+*.xlsx
+*.html
+*.png
+
+# cache / python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# vscode
+.vscode/
+
+# sistema
+.DS_Store
+Thumbs.db
