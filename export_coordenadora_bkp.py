@@ -70,48 +70,6 @@ def clean_simple_value(value):
     return text
 
 
-def to_single_line(value):
-    text = clean_simple_value(value)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def cut_at_markers(value, markers):
-    text = clean_simple_value(value)
-    if not text:
-        return ""
-
-    cut_positions = []
-    for marker in markers:
-        pos = text.find(marker)
-        if pos >= 0:
-            cut_positions.append(pos)
-
-    if cut_positions:
-        first_pos = min(cut_positions)
-        if first_pos == 0:
-            return ""
-        text = text[:first_pos]
-
-    return clean_simple_value(text).strip(" .:-")
-
-    cut_positions = []
-    for marker in markers:
-        pos = text.find(marker)
-        if pos > 0:
-            cut_positions.append(pos)
-
-    if cut_positions:
-        text = text[:min(cut_positions)]
-
-    text = to_single_line(text)
-    return text.strip(" .:-")
-
-
-def clean_field(value, *markers):
-    return cut_at_markers(value, list(markers))
-
-
 def first_meaningful_line(value):
     text = clean_simple_value(value)
     if not text:
@@ -138,11 +96,11 @@ def first_meaningful_line(value):
         if line not in {"-", ":"}:
             return line
 
-    return to_single_line(text)
+    return text
 
 
 def normalize_modal(tipo_processo, tipo_transporte):
-    joined = f"{to_single_line(tipo_processo)} {to_single_line(tipo_transporte)}".upper()
+    joined = f"{clean_simple_value(tipo_processo)} {clean_simple_value(tipo_transporte)}".upper()
 
     if "AERE" in joined:
         return "AÉREO"
@@ -150,7 +108,7 @@ def normalize_modal(tipo_processo, tipo_transporte):
         return "MARÍTIMO"
     if "RODOV" in joined:
         return "RODOVIÁRIO"
-    return to_single_line(tipo_processo) or to_single_line(tipo_transporte)
+    return clean_simple_value(tipo_processo) or clean_simple_value(tipo_transporte)
 
 
 def get_section_tables(section):
@@ -160,6 +118,11 @@ def get_section_tables(section):
 
 
 def extract_doc_rows(section):
+    """
+    Converte tabelas de Documentos / Informações Adicionais em lista de dicionários.
+    Espera linhas no formato:
+    [Tipo Documento, Nr.Documento, Data Entrega, Data Validade, ...]
+    """
     results = []
 
     for table in get_section_tables(section):
@@ -167,7 +130,7 @@ def extract_doc_rows(section):
         if len(rows) < 2:
             continue
 
-        header = [to_single_line(x).lower() for x in rows[0]]
+        header = [clean_simple_value(x).lower() for x in rows[0]]
         joined = " | ".join(header)
 
         if "tipo documento" not in joined or "nr.documento" not in joined:
@@ -177,15 +140,15 @@ def extract_doc_rows(section):
             if not row:
                 continue
 
-            first = to_single_line(row[0]).lower()
+            first = clean_simple_value(row[0]).lower()
             if first.startswith("total"):
                 continue
 
             results.append({
-                "tipo_documento": to_single_line(row[0]) if len(row) > 0 else "",
-                "nr_documento": to_single_line(row[1]) if len(row) > 1 else "",
-                "data_entrega": to_single_line(row[2]) if len(row) > 2 else "",
-                "data_validade": to_single_line(row[3]) if len(row) > 3 else "",
+                "tipo_documento": clean_simple_value(row[0]) if len(row) > 0 else "",
+                "nr_documento": clean_simple_value(row[1]) if len(row) > 1 else "",
+                "data_entrega": clean_simple_value(row[2]) if len(row) > 2 else "",
+                "data_validade": clean_simple_value(row[3]) if len(row) > 3 else "",
             })
 
     return results
@@ -194,33 +157,37 @@ def extract_doc_rows(section):
 def find_doc(rows, *wanted_types):
     wanted = {w.upper() for w in wanted_types}
     for row in rows:
-        if to_single_line(row.get("tipo_documento")).upper() in wanted:
+        if clean_simple_value(row.get("tipo_documento")).upper() in wanted:
             return row
     return None
 
 
 def first_non_empty(*values):
     for value in values:
-        value = to_single_line(value)
+        value = clean_simple_value(value)
         if value:
             return value
     return ""
 
 
 def extract_from_preview(preview, label):
+    """
+    Procura coisas do tipo:
+    LABEL=>valor
+    """
     text = clean_simple_value(preview)
     if not text:
         return ""
 
     pattern = rf"{re.escape(label)}\s*=>\s*([^\r\n]+)"
     match = re.search(pattern, text, flags=re.IGNORECASE)
-    return to_single_line(match.group(1)) if match else ""
+    return clean_simple_value(match.group(1)) if match else ""
 
 
 def parse_data_chegada_from_preview(preview):
     text = clean_simple_value(preview)
     match = re.search(r"Data Chegada Carga:\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text, flags=re.IGNORECASE)
-    return to_single_line(match.group(1)) if match else ""
+    return clean_simple_value(match.group(1)) if match else ""
 
 
 def build_row(process_data):
@@ -261,75 +228,13 @@ def build_row(process_data):
         referencia_resumo,
     )
 
-    responsavel_atual = clean_field(
-        resumo.get("responsavel_atual"),
-        "Status Processo",
-        "Vinculado ao Processo",
-        "Dados Gerais",
-        "Documentos",
-    )
-
-    status = clean_field(
-        resumo.get("status_processo"),
-        "Vinculado ao Processo",
-        "Dados Gerais",
-        "Documentos",
-        "Informações Adicionais",
-    )
-
-    tipo_transporte_limpo = clean_field(
-        dados.get("tipo_transporte"),
-        "Data Embarque",
-        "Conhecimento",
-        "Local Embarque",
-    )
-
-    regime_limpo = clean_field(
-        dados.get("tipo_declaracao"),
-        "Taxa Cambio",
-        "Valor Declarado",
-        "Data Moeda Declarada",
-    )
-
-    embarcacao_plataforma_limpa = clean_field(
-        dados.get("embarcacao_plataforma"),
-        "Tipo Processo",
-        "Contrato",
-    )
-
-    incoterm_limpo = clean_field(
-        dados.get("incoterm"),
-        "Moeda Seguro",
-        "Taxa Siscomex",
-        "Valor Seguro",
-        "Volumes",
-        "Chegada",
-    )
-
-    valor_declarado_limpo = clean_field(
-        dados.get("valor_declarado"),
-        "Data Moeda Declarada",
-        "Moeda",
-        "Valor da Taxa",
-        "Taxa Cambio",
-    )
-
     numero_di = first_non_empty(
-    clean_field(
         dados.get("nr_di"),
-        "Contrato",
-        "Dt.Registro DI",
-        "Tipo Declaração",
-    ),
-    doc_di["nr_documento"] if doc_di else "",
+        doc_di["nr_documento"] if doc_di else "",
     )
 
     data_registro_di = first_non_empty(
-    clean_field(
         dados.get("dt_registro_di"),
-        "Tipo Declaração",
-        "Taxa Cambio",
-    ),
         doc_data_registro_di["nr_documento"] if doc_data_registro_di else "",
         doc_data_registro_di["data_entrega"] if doc_data_registro_di else "",
     )
@@ -350,19 +255,8 @@ def build_row(process_data):
         extract_from_preview(occ_preview, "ETA"),
     )
 
-    data_embarque_limpa = clean_field(
-        dados.get("data_embarque"),
-        "Local Embarque",
-        "Doc.Chegada de Carga",
-    )
-
     data_chegada = first_non_empty(
-        clean_field(
-            dados.get("data_chegada_carga"),
-            "URF de Despacho",
-            "Recinto Aduaneiro",
-            "Setor de Armazenamento",
-        ),
+        dados.get("data_chegada_carga"),
         parse_data_chegada_from_preview(dados_preview),
     )
 
@@ -371,17 +265,8 @@ def build_row(process_data):
     )
 
     master_awb_bl = first_non_empty(
-    clean_field(
         dados.get("identificacao_master"),
-        "Identificação Chegada Carga",
-        "Pack List",
-    ),
-    clean_field(
-        dados.get("identificacao_chegada_carga"),
-        "Pack List",
-        "Nome Transportador",
-    ),
-    doc_master["nr_documento"] if doc_master else "",
+        doc_master["nr_documento"] if doc_master else "",
     )
 
     commercial_invoice = first_non_empty(
@@ -397,25 +282,6 @@ def build_row(process_data):
         dados.get("pais_procedencia_carga"),
     )
 
-    local_embarque_limpo = clean_field(
-        dados.get("local_embarque"),
-        "Doc.Chegada de Carga",
-        "Identificação Master",
-    )
-
-    urf_entrada_limpa = clean_field(
-        dados.get("urf_entrada_pais"),
-        "Peso Líquido",
-        "Peso Bruto",
-        "Incoterm",
-    )
-
-    peso_liquido_limpo = clean_field(
-        dados.get("peso_liquido"),
-        "Peso Bruto",
-        "Incoterm",
-    )
-
     peso_bruto = first_non_empty(
         doc_peso_bruto["nr_documento"] if doc_peso_bruto else "",
         dados.get("peso_bruto"),
@@ -426,85 +292,23 @@ def build_row(process_data):
     )
 
     pack_list = first_non_empty(
-    clean_field(
         dados.get("pack_list"),
-        "Nome Transportador",
-        "País Transportador",
-    ),
-    doc_pack_list["nr_documento"] if doc_pack_list else "",
-    )
-
-    moeda_limpa = clean_field(
-    dados.get("moeda"),
-        "Valor da Taxa",
-        "Conhecimento / Transporte",
-        "Tipo Transporte",
-    )
-
-    valor_taxa_limpo = clean_field(
-        dados.get("valor_taxa_cambio"),
-        "Conhecimento / Transporte",
-        "Tipo Transporte",
-    )
-
-    frete_collect_limpo = clean_field(
-        dados.get("frete_collect"),
-        "Peso Bruto",
-        "Frete Nacional",
-    )
-
-    frete_prepaid_limpo = clean_field(
-    dados.get("frete_prepaid"),
-        "Peso Líquido",
-        "Peso Liquido",
-        "Frete Collect",
-    )
-
-    frete_nacional_limpo = clean_field(
-        dados.get("frete_nacional"),
-        "Incoterm",
-        "Moeda Seguro",
-    )
-
-    moeda_frete_limpa = clean_field(
-    dados.get("moeda_frete"),
-        "URF Entrada no País",
-        "URF Entrada no Pais",
-        "Frete Prepaid",
-    )
-
-    recinto_aduaneiro_limpo = first_non_empty(
-        clean_field(
-            dados.get("recinto_aduaneiro"),
-            "Setor de Armazenamento",
-            "Armazém",
-            "Invoice(s)",
-        ),
-        extract_from_preview(dados_preview, "Recinto Aduaneiro"),
-    )
-
-    armazem_limpo = first_non_empty(
-        clean_field(
-            dados.get("armazem"),
-            "Invoice(s)",
-            "Ocorrências",
-        ),
-        extract_from_preview(dados_preview, "Armazém"),
+        doc_pack_list["nr_documento"] if doc_pack_list else "",
     )
 
     return {
         "Cliente": cliente,
         "Código JS": process_data.get("process_id", ""),
         "Referência Cliente": referencia_cliente,
-        "Responsável Atual": responsavel_atual,
-        "Status": status,
+        "Responsável Atual": clean_simple_value(resumo.get("responsavel_atual")),
+        "Status": clean_simple_value(resumo.get("status_processo")),
         "Modal": normalize_modal(dados.get("tipo_processo"), dados.get("tipo_transporte")),
-        "Tipo Transporte": tipo_transporte_limpo,
-        "Regime": regime_limpo,
-        "Embarcação/Plataforma": embarcacao_plataforma_limpa,
-        "Incoterm": incoterm_limpo,
+        "Tipo Transporte": clean_simple_value(dados.get("tipo_transporte")),
+        "Regime": clean_simple_value(dados.get("tipo_declaracao")),
+        "Embarcação/Plataforma": clean_simple_value(dados.get("embarcacao_plataforma")),
+        "Incoterm": clean_simple_value(dados.get("incoterm")),
         "ETA": eta,
-        "Data de Embarque": data_embarque_limpa,
+        "Data de Embarque": clean_simple_value(dados.get("data_embarque")),
         "Data de Chegada": data_chegada,
         "Data de Registro da DI": data_registro_di,
         "Numero da DI": numero_di,
@@ -516,20 +320,20 @@ def build_row(process_data):
         "Commercial Invoice": commercial_invoice,
         "Proforma Invoice": proforma_invoice,
         "País de Origem": pais_origem,
-        "Local de Embarque": local_embarque_limpo,
-        "URF Entrada no País": urf_entrada_limpa,
-        "Peso Líquido": peso_liquido_limpo,
+        "Local de Embarque": clean_simple_value(dados.get("local_embarque")),
+        "URF Entrada no País": clean_simple_value(dados.get("urf_entrada_pais")),
+        "Peso Líquido": clean_simple_value(dados.get("peso_liquido")),
         "Peso Bruto": peso_bruto,
         "Volume": volume,
-        "Valor Declarado": valor_declarado_limpo,
-        "Moeda": moeda_limpa,
-        "Valor da Taxa": valor_taxa_limpo,
-        "Frete Collect": frete_collect_limpo,
-        "Frete Prepaid": frete_prepaid_limpo,
-        "Frete Nacional": frete_nacional_limpo,
-        "Moeda Frete": moeda_frete_limpa,
-        "Recinto Aduaneiro": recinto_aduaneiro_limpo,
-        "Armazém": armazem_limpo,
+        "Valor Declarado": clean_simple_value(dados.get("valor_declarado")),
+        "Moeda": clean_simple_value(dados.get("moeda")),
+        "Valor da Taxa": clean_simple_value(dados.get("valor_taxa_cambio")),
+        "Frete Collect": clean_simple_value(dados.get("frete_collect")),
+        "Frete Prepaid": clean_simple_value(dados.get("frete_prepaid")),
+        "Frete Nacional": clean_simple_value(dados.get("frete_nacional")),
+        "Moeda Frete": clean_simple_value(dados.get("moeda_frete")),
+        "Recinto Aduaneiro": extract_from_preview(dados_preview, "Recinto Aduaneiro"),
+        "Armazém": extract_from_preview(dados_preview, "Armazém"),
     }
 
 

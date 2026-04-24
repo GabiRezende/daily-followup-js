@@ -23,8 +23,6 @@ TAB_HASHES = {
     "dados_gerais": "#tabDadosGerais",
     "documentos": "#tabDocumentos",
     "documentos_adicionais": "#tabDocumentosAdicionais",
-    "ocorrencia": "#tabOcorrencia",
-    "demonstrativo_despesas": "#tabDemoDespesa",
 }
 
 
@@ -131,8 +129,6 @@ def process_one(page, process_id: str) -> dict:
         "dados_gerais",
         "documentos",
         "documentos_adicionais",
-        "ocorrencia",
-        "demonstrativo_despesas",
     ]
 
     for section_name in sections:
