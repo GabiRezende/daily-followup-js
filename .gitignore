@@ -29,3 +29,7 @@ __pycache__/
 # sistema
 .DS_Store
 Thumbs.db
+
+#gmail
+token_gmail.json
+credentials_gmail.json

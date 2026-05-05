@@ -98,6 +98,54 @@ TAB_LABELS = {
 }
 
 
+def is_label_or_group_header(value: str | None) -> bool:
+    if value is None:
+        return True
+
+    text = normalize_text(str(value)).strip(" .:-")
+    if not text:
+        return True
+
+    lowered = text.lower()
+
+    if "has_processo_word" in lowered or "has_resultado_consulta" in lowered:
+        return True
+
+    known = set(SUMMARY_FIELD_MAP.keys())
+    known.update(DADOS_GERAIS_FIELD_MAP.keys())
+    known.update(SUMMARY_STOP_LABELS)
+    known.update(DADOS_GERAIS_STOP_LABELS)
+    known.update(NOISE_LINES)
+    known.update(TAB_LABELS)
+    known.update({
+        "Taxa Cambio",
+        "Taxa Câmbio",
+        "Conhecimento / Transporte",
+        "Carga",
+        "Volumes",
+        "Chegada",
+        "Invoice(s)",
+        "Nr.Invoice",
+        "Moeda",
+        "Valor na Moeda",
+        "Exportador",
+        "Ocorrências",
+        "Pagamentos na Conta do Cliente",
+        "Nova Ocorrência",
+        "Novo Documento",
+    })
+
+    known_lower = {normalize_text(item).strip(" .:-").lower() for item in known}
+
+    if lowered in known_lower:
+        return True
+
+    if lowered.startswith("invoice(s)") and ("nr.invoice" in lowered or "exportador" in lowered):
+        return True
+
+    return False
+
+
 def normalize_text(text: str) -> str:
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -280,6 +328,9 @@ def clean_extracted_value(label: str, value: str | None) -> str | None:
         return None
 
     if label == "Vinculado ao Processo":
+        return None
+
+    if is_label_or_group_header(value):
         return None
 
     return value if value else None

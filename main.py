@@ -210,7 +210,12 @@ def main():
     results = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        try:
+            browser = p.chromium.launch(headless=headless)
+        except Exception as e:
+            print(f"Erro ao abrir Chromium com headless={headless}: {e}")
+            print("Tentando abrir Chromium em modo visível...")
+            browser = p.chromium.launch(headless=False)
 
         if STATE_FILE.exists():
             context = browser.new_context(
