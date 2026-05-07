@@ -23,6 +23,7 @@ TAB_HASHES = {
     "dados_gerais": "#tabDadosGerais",
     "documentos": "#tabDocumentos",
     "documentos_adicionais": "#tabDocumentosAdicionais",
+    "demonstrativo_despesas": "#tabDemoDespesa",
 }
 
 

@@ -25,9 +25,9 @@ ORDERED_HEADERS = [
     "ETA",
     "Data de Embarque",
     "Data de Chegada",
-    "Data de Registro da DI",
-    "Numero da DI",
-    "Data da CI",
+    "Data Registro DI/DUIMP",
+    "Numero DI/DUIMP",
+    "Data Desembaraço",
     "Canal",
     "House AWB/BL",
     "Master AWB/BL",
@@ -49,6 +49,18 @@ ORDERED_HEADERS = [
     "Moeda Frete",
     "Recinto Aduaneiro",
     "Armazém",
+    "CIF USD",
+    "Recolhido II",
+    "Recolhido IPI",
+    "Recolhido PIS",
+    "Recolhido COFINS",
+    "Recolhido ICMS",
+    "Suspenso II",
+    "Suspenso IPI",
+    "Suspenso PIS",
+    "Suspenso COFINS",
+    "Suspenso ICMS",
+    "Taxa Siscomex",
 ]
 
 
@@ -68,6 +80,19 @@ LABEL_MARKERS = [
     "Nr. DI",
     "Numero da DI",
     "Número da DI",
+    "DUIMP",
+    "Nr. DUIMP",
+    "NR DUIMP",
+    "Nº DUIMP",
+    "N° DUIMP",
+    "Numero da DUIMP",
+    "Número da DUIMP",
+    "Data Registro DUIMP",
+    "Data de Registro DUIMP",
+    "Dt.Registro DUIMP",
+    "Data do Desembaraço",
+    "DATA DO DESEMBARAÇO",
+    "Data Desembaraço",
     "Contrato",
     "Dt.Registro DI",
     "Data Registro DI",
@@ -315,20 +340,23 @@ def first_meaningful_line(value):
 
     return to_single_line(text)
 
-
 def normalize_modal(tipo_processo, tipo_transporte):
-    tipo_processo_limpo = clean_field(tipo_processo, 
-        "Nr. DI", 
-        "Contrato", 
-        "Dt.Registro DI", 
-        "Tipo Declaração", 
-        "Taxa Cambio", 
+    tipo_processo_limpo = clean_field(
+        tipo_processo,
+        "Nr. DI",
+        "Contrato",
+        "Dt.Registro DI",
+        "Tipo Declaração",
+        "Taxa Cambio",
+        "Taxa Câmbio",
         "Valor Declarado",
+        "Conhecimento / Transporte",
         "Conhecimento/Transporte",
         "Tipo Transporte",
     )
 
-    tipo_transporte_limpo = clean_field(tipo_transporte,
+    tipo_transporte_limpo = clean_field(
+        tipo_transporte,
         "Conhecimento",
         "Data Embarque",
         "Local Embarque",
@@ -340,30 +368,36 @@ def normalize_modal(tipo_processo, tipo_transporte):
 
         if "ADMINISTRATIVO" in text:
             return "ADMINISTRATIVO"
-        
+
         if "COMERCIAL" in text:
             return "COMERCIAL"
-        
-        if "AERE" in text or "AÉRE" in text:
-            return "AÉREO"
-        
+
+        # Prioriza marítimo antes de aéreo.
+        # Tem processo em que Tipo Processo é marítimo,
+        # mas Tipo Transporte aparece como aérea.
         if "MARIT" in text or "MARÍT" in text:
             return "MARÍTIMO"
-        
+
+        if "AERE" in text or "AÉRE" in text:
+            return "AÉREO"
+
         if "RODOV" in text:
             return "RODOVIÁRIO"
-    
+
         return ""
-    
+
     modal = modal_from_text(tipo_processo_limpo)
+
     if modal:
         return modal
-        
+
     modal = modal_from_text(tipo_transporte_limpo)
+
     if modal:
         return modal
-        
+
     return tipo_processo_limpo or tipo_transporte_limpo
+
 
 
 def get_section_tables(section):
@@ -439,6 +473,249 @@ def parse_data_chegada_from_preview(preview):
     )
     return sanitize_value(match.group(1)) if match else ""
 
+def parse_money_br(value) -> float:
+    text = to_single_line(value)
+
+    if not text:
+        return 0.0
+
+    text = re.sub(r"[^\d,.-]", "", text)
+
+    if not text:
+        return 0.0
+
+    # formato BR: 1.234,56
+    text = text.replace(".", "").replace(",", ".")
+
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def format_money_br(value: float) -> str:
+    if not value:
+        return ""
+
+    text = f"{value:,.2f}"
+    text = text.replace(",", "X").replace(".", ",").replace("X", ".")
+    return text
+
+
+def add_money(target: dict, key: str, value):
+    amount = parse_money_br(value)
+
+    if amount:
+        target[key] = target.get(key, 0.0) + amount
+
+
+def normalize_expense_text(value) -> str:
+    text = to_single_line(value).upper()
+
+    replacements = {
+        "Á": "A",
+        "À": "A",
+        "Ã": "A",
+        "Â": "A",
+        "É": "E",
+        "Ê": "E",
+        "Í": "I",
+        "Ó": "O",
+        "Õ": "O",
+        "Ô": "O",
+        "Ú": "U",
+        "Ç": "C",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return text
+
+
+def extract_demonstrativo_values(process_data: dict) -> dict:
+    """
+    Extrai valores do Demonstrativo de Despesas.
+
+    Existem duas tabelas diferentes:
+    1. Demonstrativo de Despesas - DD Proforma:
+       Data | Despesa | Valor Crédito | Valor Débito | Valor Previsto
+
+    2. Pagamentos na Conta do Cliente:
+       Data | Despesa | Valor | Banco | Agência | Conta Corrente
+
+    Para impostos recolhidos na tabela de pagamentos, o valor correto é a coluna "Valor",
+    não Banco/Agência.
+    """
+
+    result = {
+        "CIF USD": "",
+        "Recolhido II": 0.0,
+        "Recolhido IPI": 0.0,
+        "Recolhido PIS": 0.0,
+        "Recolhido COFINS": 0.0,
+        "Recolhido ICMS": 0.0,
+        "Suspenso II": 0.0,
+        "Suspenso IPI": 0.0,
+        "Suspenso PIS": 0.0,
+        "Suspenso COFINS": 0.0,
+        "Suspenso ICMS": 0.0,
+        "Taxa Siscomex": 0.0,
+    }
+
+    # Escolhe uma seção só para não somar a mesma tabela repetida.
+    # Se no futuro o main.py trouxer demonstrativo_despesas separado, usa ele.
+    section = (
+        process_data.get("demonstrativo_despesas")
+        or process_data.get("demonstrativo_de_despesas")
+        or process_data.get("demo_despesa")
+        or process_data.get("documentos_adicionais")
+        or process_data.get("documentos")
+        or process_data.get("dados_gerais")
+        or {}
+    )
+
+    processed = set()
+
+    for table in get_section_tables(section):
+        rows = table.get("rows", []) or []
+
+        current_table_type = None
+
+        for row in rows:
+            cells = [to_single_line(cell) for cell in row if to_single_line(cell)]
+
+            if not cells:
+                continue
+
+            normalized_cells = [normalize_expense_text(cell) for cell in cells]
+            joined_header = " | ".join(normalized_cells)
+
+            # Detecta cabeçalho da tabela DD Proforma
+            if (
+                "DATA" in normalized_cells
+                and "DESPESA" in normalized_cells
+                and "VALOR CREDITO" in joined_header
+                and "VALOR DEBITO" in joined_header
+            ):
+                current_table_type = "dd_proforma"
+                continue
+
+            # Detecta cabeçalho da tabela Pagamentos
+            if (
+                "DATA" in normalized_cells
+                and "DESPESA" in normalized_cells
+                and "VALOR" in normalized_cells
+                and "BANCO" in normalized_cells
+                and "AGENCIA" in normalized_cells
+                and "CONTA CORRENTE" in joined_header
+            ):
+                current_table_type = "pagamentos"
+                continue
+
+            # Só processa linhas reais iniciadas por data
+            if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", cells[0]):
+                continue
+
+            if len(cells) < 3:
+                continue
+
+            data = cells[0]
+            despesa = cells[1]
+            desc = normalize_expense_text(despesa)
+
+            if current_table_type == "pagamentos":
+                # Data | Despesa | Valor | Banco | Agência | Conta Corrente
+                value_to_use = cells[2]
+
+            elif current_table_type == "dd_proforma":
+                # Data | Despesa | Valor Crédito | Valor Débito | Valor Previsto
+                if len(cells) < 5:
+                    continue
+
+                valor_credito = cells[2]
+                valor_debito = cells[3]
+                valor_previsto = cells[4]
+
+                # Para despesa/imposto, normalmente o valor útil está no débito.
+                # Se não tiver débito, tenta previsto; crédito fica por último.
+                value_to_use = first_non_empty(valor_debito, valor_previsto, valor_credito)
+
+            else:
+                continue
+
+            # Evita somar a mesma linha duplicada caso a tabela apareça repetida
+            dedupe_key = (
+                current_table_type,
+                data,
+                desc,
+                value_to_use,
+            )
+
+            if dedupe_key in processed:
+                continue
+
+            processed.add(dedupe_key)
+
+            is_suspenso = (
+                "SUSPENS" in desc
+                or "EXONER" in desc
+                or "EXONAR" in desc
+            )
+
+            if "TAXA" in desc and "SISCOMEX" in desc:
+                add_money(result, "Taxa Siscomex", value_to_use)
+
+            elif "COFINS" in desc:
+                add_money(
+                    result,
+                    "Suspenso COFINS" if is_suspenso else "Recolhido COFINS",
+                    value_to_use,
+                )
+
+            elif "PIS" in desc or "PASEP" in desc:
+                add_money(
+                    result,
+                    "Suspenso PIS" if is_suspenso else "Recolhido PIS",
+                    value_to_use,
+                )
+
+            elif "IPI" in desc:
+                add_money(
+                    result,
+                    "Suspenso IPI" if is_suspenso else "Recolhido IPI",
+                    value_to_use,
+                )
+
+            elif "ICMS" in desc:
+                add_money(
+                    result,
+                    "Suspenso ICMS" if is_suspenso else "Recolhido ICMS",
+                    value_to_use,
+                )
+
+            elif (
+                re.search(r"\bII\b", desc)
+                or "IMPOSTO DE IMPORTACAO" in desc
+                or "IMPOSTO IMPORTACAO" in desc
+                or "IMPORTATION TAX" in desc
+                or "IMPORT DUTY" in desc
+            ):
+                add_money(
+                    result,
+                    "Suspenso II" if is_suspenso else "Recolhido II",
+                    value_to_use,
+                )
+
+            else:
+                continue
+
+    for key, value in list(result.items()):
+        if isinstance(value, float):
+            result[key] = format_money_br(value)
+
+    return result
+
 
 def build_row(process_data):
     resumo = process_data.get("resumo", {}) or {}
@@ -452,7 +729,25 @@ def build_row(process_data):
     rows_all = doc_rows + add_rows
 
     doc_di = find_doc(rows_all, "DI")
+    doc_duimp = find_doc(
+        rows_all,
+        "DUIMP",
+        "Declaração Única de Importação",
+        "Nº DUIMP",
+        "Nr. DUIMP",
+        "N° DUIMP",
+        "NUMERO DA DUIMP",
+        "NÚMERO DA DUIMP",
+        "NR. DUIMP",
+        "NR DUIMP",
+    )
     doc_ci = find_doc(rows_all, "CI", "CI (COMPROV. IMPORT)")
+    doc_data_desembaraco = find_doc(
+        rows_all,
+        "Data do Desembaraço",
+        "Data Desembaraço",
+        "DATA DE DESEMBARAÇO",
+    )
     doc_house = find_doc(rows_all, "HAWB/HBL", "HAWB", "HBL")
     doc_master = find_doc(rows_all, "AWB/MAWB", "MAWB", "AWB", "MASTER BL", "MASTER B/L")
     doc_bl = find_doc(rows_all, "B/L", "BL", "BILL OF LADING")
@@ -463,6 +758,13 @@ def build_row(process_data):
     doc_peso_bruto = find_doc(rows_all, "PESO BRUTO")
     doc_volumes = find_doc(rows_all, "VOLUMES")
     doc_data_registro_di = find_doc(rows_all, "DATA REGISTRO DI")
+    doc_data_registro_duimp = find_doc(
+        rows_all,
+        "DATA REGISTRO DUIMP",
+        "DATA DE REGISTRO DUIMP",
+        "DT. REGISTRO DUIMP",
+        "DT.REGISTRO DUIMP",
+    )
     doc_canal = find_doc(rows_all, "CANAL")
     doc_eta = find_doc(rows_all, "PREVISÃO DE CHEGADA", "ETA")
     doc_pack_list = find_doc(rows_all, "ROMANEIO CARGA / PACKING LIST", "PACK LIST")
@@ -546,20 +848,51 @@ def build_row(process_data):
         doc_di["nr_documento"] if doc_di else "",
     )
 
-    data_registro_di = first_non_empty(
-        clean_field(
-            dados.get("dt_registro_di"),
-            "Tipo Declaração",
-            "Taxa Cambio",
-            "Taxa Câmbio",
-        ),
-        extract_label_value(dados_blob, "Dt.Registro DI"),
-        extract_label_value(dados_blob, "Data Registro DI"),
-        doc_data_registro_di["nr_documento"] if doc_data_registro_di else "",
-        doc_data_registro_di["data_entrega"] if doc_data_registro_di else "",
+    numero_duimp = first_non_empty(
+        extract_label_value(dados_blob, "DUIMP"),
+        extract_label_value(dados_blob, "Nr. DUIMP"),
+        extract_label_value(dados_blob, "Numero da DUIMP"),
+        extract_label_value(dados_blob, "Número da DUIMP"),
+        doc_duimp["nr_documento"] if doc_duimp else "",
     )
 
-    data_ci = first_non_empty(
+    numero_di_duimp = " / ".join(
+        value for value in [numero_di, numero_duimp]
+        if value
+    )
+
+    data_registro_di = first_non_empty(
+    clean_field(
+        dados.get("dt_registro_di"),
+        "Tipo Declaração",
+        "Taxa Cambio",
+        "Taxa Câmbio",
+    ),
+    extract_label_value(dados_blob, "Dt.Registro DI"),
+    extract_label_value(dados_blob, "Data Registro DI"),
+    doc_data_registro_di["nr_documento"] if doc_data_registro_di else "",
+    doc_data_registro_di["data_entrega"] if doc_data_registro_di else "",
+)
+
+    data_registro_duimp = first_non_empty(
+        extract_label_value(dados_blob, "Dt.Registro DUIMP"),
+        extract_label_value(dados_blob, "Data Registro DUIMP"),
+        extract_label_value(dados_blob, "Data de Registro DUIMP"),
+        doc_data_registro_duimp["nr_documento"] if doc_data_registro_duimp else "",
+        doc_data_registro_duimp["data_entrega"] if doc_data_registro_duimp else "",
+    )
+
+    data_registro_di_duimp = " / ".join(
+        value for value in [data_registro_di, data_registro_duimp]
+        if value
+    )
+
+    data_desembaraco = first_non_empty(
+        doc_data_desembaraco["nr_documento"] if doc_data_desembaraco else "",
+        doc_data_desembaraco["data_entrega"] if doc_data_desembaraco else "",
+        extract_from_preview(occ_preview, "DATA DO DESEMBARAÇO"),
+        extract_from_preview(occ_preview, "DATA DESEMBARAÇO"),
+
         doc_ci["data_entrega"] if doc_ci else "",
         extract_from_preview(occ_preview, "DATA DA CI"),
     )
@@ -785,6 +1118,8 @@ def build_row(process_data):
         extract_label_value(dados_blob, "Armazem"),
     )
 
+    demonstrativo_values = extract_demonstrativo_values(process_data)
+
     return {
         "Cliente": cliente,
         "Código JS": process_data.get("process_id", ""),
@@ -799,9 +1134,9 @@ def build_row(process_data):
         "ETA": eta,
         "Data de Embarque": data_embarque_limpa,
         "Data de Chegada": data_chegada,
-        "Data de Registro da DI": data_registro_di,
-        "Numero da DI": numero_di,
-        "Data da CI": data_ci,
+        "Data Registro DI/DUIMP": data_registro_di_duimp,
+        "Numero DI/DUIMP": numero_di_duimp,
+        "Data Desembaraço": data_desembaraco,
         "Canal": canal,
         "House AWB/BL": house_awb_bl,
         "Master AWB/BL": master_awb_bl,
@@ -823,6 +1158,18 @@ def build_row(process_data):
         "Moeda Frete": moeda_frete_limpa,
         "Recinto Aduaneiro": recinto_aduaneiro_limpo,
         "Armazém": armazem_limpo,
+        "CIF USD": demonstrativo_values.get("CIF USD", ""),
+        "Recolhido II": demonstrativo_values.get("Recolhido II", ""),
+        "Recolhido IPI": demonstrativo_values.get("Recolhido IPI", ""),
+        "Recolhido PIS": demonstrativo_values.get("Recolhido PIS", ""),
+        "Recolhido COFINS": demonstrativo_values.get("Recolhido COFINS", ""),
+        "Recolhido ICMS": demonstrativo_values.get("Recolhido ICMS", ""),
+        "Suspenso II": demonstrativo_values.get("Suspenso II", ""),
+        "Suspenso IPI": demonstrativo_values.get("Suspenso IPI", ""),
+        "Suspenso PIS": demonstrativo_values.get("Suspenso PIS", ""),
+        "Suspenso COFINS": demonstrativo_values.get("Suspenso COFINS", ""),
+        "Suspenso ICMS": demonstrativo_values.get("Suspenso ICMS", ""),
+        "Taxa Siscomex": demonstrativo_values.get("Taxa Siscomex", ""),
     }
 
 

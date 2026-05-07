@@ -34,7 +34,7 @@ CLIENT_HEADERS = [
     "Data Chegada",
     "Data Registro DI/DUIMP",
     "Numero DI/DUIMP",
-    "Data CI",
+    "Data Desembaraço",
     "Canal",
     "HAWB",
     "AWB/BL",
@@ -185,17 +185,37 @@ def simplify_referencia(cliente: str, referencia) -> str:
 
     if cliente == "CLADTEK":
         found = []
-        found.extend(extract_all(r"\bCTBI\s*[-:]?\s*\d+\b", ref))
-        found.extend(extract_all(r"\bPO\s*[-:]?\s*\d+\b", ref))
 
-        normalized = []
-        for item in found:
-            item = re.sub(r"\s*[-:]?\s*", " ", item, count=1).strip()
+        # Pega:
+        # CTBI 153
+        # CTBI 153.11
+        # CTBI 099 E 112
+        # CTBI 145 / 146 / 151
+        # CTBI 132 E 166
+        # Ignora PO.
+        ctbi_pattern = (
+            r"\bCTBI\s*[-:]?\s*"
+            r"(\d+(?:[.,]\d+)?[A-Z]?)"
+            r"((?:\s*(?:E|/|,|&|\+)\s*\d+(?:[.,]\d+)?[A-Z]?)*)"
+        )
 
-            if item not in normalized:
-                normalized.append(item)
+        for match in re.finditer(ctbi_pattern, ref_original, flags=re.IGNORECASE):
+            full_block = f"{match.group(1)} {match.group(2) or ''}"
 
-        return " / ".join(normalized) if normalized else ref_original
+            numbers = re.findall(
+                r"\d+(?:[.,]\d+)?[A-Z]?",
+                full_block,
+                flags=re.IGNORECASE,
+            )
+
+            for number in numbers:
+                number = number.replace(",", ".").strip()
+                item = f"CTBI {number}"
+
+                if item not in found:
+                    found.append(item)
+
+        return " / ".join(found) if found else ref_original
 
     if cliente == "INTERMOOR":
         found = extract_first(r"\bBRI[MA]\s*\d{3,}-\d{2,}\b", ref)
@@ -212,11 +232,6 @@ def simplify_referencia(cliente: str, referencia) -> str:
     if cliente == "FRANK'S":
         found_refs = []
 
-        # Pega FOSD, F-OSD e F-OST:
-        # FOSD-000/00
-        # F-OSD-056/26
-        # F-OST-065/26 A
-        # F-OST-065/26 B
         found_fos = extract_all(
             r"\bF[-\s]?OS[DT]\s*-?\s*\d+[A-Z]?/\d+[A-Z]?(?:\s*[AB])?\b",
             ref,
@@ -231,9 +246,6 @@ def simplify_referencia(cliente: str, referencia) -> str:
             if item not in found_refs:
                 found_refs.append(item)
 
-        # Pega BRIA/BRIM:
-        # BRIA1515-2026
-        # BRIM1515-2026
         found_bri = extract_all(
             r"\bBRI[MA]\s*\d{3,}-\d{2,}\b",
             ref,
@@ -278,11 +290,27 @@ def build_client_row(row: dict) -> dict:
         "Regime": regime,
         "Embarcação/Plataforma": embarcacao,
         "Incoterm": clean_text(row.get("Incoterm")),
+
         "Data Embarque": clean_text(row.get("Data de Embarque")),
         "Data Chegada": clean_text(row.get("Data de Chegada")),
-        "Data Registro DI/DUIMP": clean_text(row.get("Data de Registro da DI")),
-        "Numero DI/DUIMP": clean_text(row.get("Numero da DI")),
-        "Data CI": clean_text(row.get("Data da CI")),
+
+        # Compatível com o nome novo e com o nome antigo
+        "Data Registro DI/DUIMP": clean_text(
+            row.get("Data Registro DI/DUIMP")
+            or row.get("Data de Registro da DI")
+        ),
+
+        # Compatível com o nome novo e com o nome antigo
+        "Numero DI/DUIMP": clean_text(
+            row.get("Numero DI/DUIMP")
+            or row.get("Numero da DI")
+        ),
+
+        "Data Desembaraço": clean_text(
+            row.get("Data Desembaraço")
+            or row.get("Data da CI")
+            or row.get("Data CI")
+        ),
         "Canal": clean_text(row.get("Canal")),
         "HAWB": clean_text(row.get("House AWB/BL")),
         "AWB/BL": clean_text(row.get("Master AWB/BL")),
@@ -325,7 +353,7 @@ def apply_preferred_widths(ws, header_row: int, headers: list[str]):
         "Data Chegada": 20,
         "Data Registro DI/DUIMP": 28,
         "Numero DI/DUIMP": 28,
-        "Data CI": 16,
+        "Data Desembaraço": 20,
         "Canal": 14,
         "HAWB": 20,
         "AWB/BL": 22,
