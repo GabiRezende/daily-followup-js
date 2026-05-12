@@ -49,7 +49,7 @@ ORDERED_HEADERS = [
     "Moeda Frete",
     "Recinto Aduaneiro",
     "Armazém",
-    "CIF USD",
+    "CIF (R$)",
     "Recolhido II",
     "Recolhido IPI",
     "Recolhido PIS",
@@ -534,22 +534,8 @@ def normalize_expense_text(value) -> str:
 
 
 def extract_demonstrativo_values(process_data: dict) -> dict:
-    """
-    Extrai valores do Demonstrativo de Despesas.
-
-    Existem duas tabelas diferentes:
-    1. Demonstrativo de Despesas - DD Proforma:
-       Data | Despesa | Valor Crédito | Valor Débito | Valor Previsto
-
-    2. Pagamentos na Conta do Cliente:
-       Data | Despesa | Valor | Banco | Agência | Conta Corrente
-
-    Para impostos recolhidos na tabela de pagamentos, o valor correto é a coluna "Valor",
-    não Banco/Agência.
-    """
-
+    
     result = {
-        "CIF USD": "",
         "Recolhido II": 0.0,
         "Recolhido IPI": 0.0,
         "Recolhido PIS": 0.0,
@@ -723,6 +709,7 @@ def build_row(process_data):
     documentos = process_data.get("documentos", {}) or {}
     adicionais = process_data.get("documentos_adicionais", {}) or {}
     ocorrencia = process_data.get("ocorrencia", {}) or {}
+    mercadorias = process_data.get("mercadorias", {}) or {}
 
     doc_rows = extract_doc_rows(documentos)
     add_rows = extract_doc_rows(adicionais)
@@ -1118,6 +1105,11 @@ def build_row(process_data):
         extract_label_value(dados_blob, "Armazem"),
     )
 
+    valor_cif_rs = first_non_empty(
+        mercadorias.get("valor_cif_rs"),
+        extract_label_value(mercadorias.get("preview", ""), "CIF (R$)"),
+    )
+
     demonstrativo_values = extract_demonstrativo_values(process_data)
 
     return {
@@ -1158,7 +1150,7 @@ def build_row(process_data):
         "Moeda Frete": moeda_frete_limpa,
         "Recinto Aduaneiro": recinto_aduaneiro_limpo,
         "Armazém": armazem_limpo,
-        "CIF USD": demonstrativo_values.get("CIF USD", ""),
+        "CIF (R$)": valor_cif_rs,
         "Recolhido II": demonstrativo_values.get("Recolhido II", ""),
         "Recolhido IPI": demonstrativo_values.get("Recolhido IPI", ""),
         "Recolhido PIS": demonstrativo_values.get("Recolhido PIS", ""),
